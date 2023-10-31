@@ -14,6 +14,8 @@ import Data.Profunctor
 import Data.Bifunctor
 import Data.Functor.Contravariant
 import Control.Monad
+import Control.Monad.State
+import Control.Applicative (Applicative(liftA2))
 
 data Check v a where
   CVar :: v -> Check v a
@@ -70,6 +72,87 @@ instance Functor (Generate v a) where fmap = dimap id
 
 type Name = String
 
+data DNF a where
+  DNF :: [Conj a] -> DNF a
+
+unDNF :: DNF a -> [Conj a]
+unDNF (DNF xs) = xs
+
+data Conj a where
+  Conj :: [Literal (Atom a)] -> Conj a
+
+data CNF a where
+  CNF :: [Disj a] -> CNF a
+
+data Disj a where
+  Disj :: [Literal (Atom a)] -> Disj a
+
+data Atom a where
+  AVar :: Name -> Atom a
+  AGen :: Gen a -> Atom a
+
+data Literal a where
+  L :: a -> Literal a
+  Neg :: a -> Literal a
+  deriving (Functor)
+
+toDNF :: Check Name a -> DNF a
+toDNF (CVar x) = DNF [Conj [L (AVar x)]]
+toDNF (Not (CVar x)) = DNF [Conj [Neg (AVar x)]]
+toDNF (Or x y) = dnfOr (toDNF x) (toDNF y)
+toDNF (And x y) = dnfAnd (toDNF x) (toDNF y)
+toDNF (BoolLit True) = undefined
+-- toDNF (Implies)
+
+dnfAnd :: DNF a -> DNF a -> DNF a
+dnfAnd x y = neg (dnfOr (neg x) (neg y))
+
+dnfOr :: DNF a -> DNF a -> DNF a
+dnfOr (DNF xs) (DNF ys) = DNF (xs ++ ys)
+
+negDNF :: DNF a -> CNF a
+negDNF (DNF xs0) = CNF $ map go xs0
+  where
+    go (Conj ys) = Disj (map negLiteral ys)
+
+negCNF :: CNF a -> DNF a
+negCNF (CNF xs0) = DNF $ map go xs0
+  where
+    go (Disj ys) = Conj (map negLiteral ys)
+
+neg :: DNF a -> DNF a
+neg = negCNF . negDNF
+
+negLiteral :: Literal a -> Literal a
+negLiteral (L x) = Neg x
+negLiteral (Neg x) = L x
+
+instance Functor Atom where
+  fmap _ (AVar x) = AVar x
+  fmap f (AGen x) = AGen $ fmap f x
+
+-- mapAtom :: (a -> b) -> Atom a -> Atom b
+-- mapAtom _ (AVar x) = AVar x
+-- mapAtom f (AGen x) = AGen $ fmap f x
+
+mapCnfLiterals :: (Literal (Atom a) -> Literal (Atom b)) -> CNF a -> CNF b
+mapCnfLiterals f (CNF xs) = CNF $ map (mapDisjLiterals f) xs
+
+mapDnfLiterals :: (Literal (Atom a) -> Literal (Atom b)) -> DNF a -> DNF b
+mapDnfLiterals f (DNF xs) = DNF $ map (mapConjLiterals f) xs
+
+mapDisjLiterals :: (Literal (Atom a) -> Literal (Atom b)) -> Disj a -> Disj b
+mapDisjLiterals f (Disj xs) = Disj $ map f xs
+
+mapConjLiterals :: (Literal (Atom a) -> Literal (Atom b)) -> Conj a -> Conj b
+mapConjLiterals f (Conj xs) = Conj $ map f xs
+
+-- cnfDisj :: [Check Name a] -> DNF a
+-- cnfDisj = DNF . cnfConj
+
+-- cnfConj :: [Check Name a] -> Conj a
+-- cnfConj = undefined
+
 data CValue a where
   CVNeutral :: CNeutral a -> CValue a
   CVBoolLit :: Bool -> CValue a
@@ -79,7 +162,8 @@ data CNeutral a where
   CNVar :: Name -> CNeutral a
   CNAnd :: CNeutral a -> CValue a -> CNeutral a
   CNOr :: CNeutral a -> CValue a -> CNeutral a
-  CNNot :: CNeutral a -> CNeutral a
+  -- CNNot :: CNeutral a -> CNeutral a
+  CNNot :: Name -> CNeutral a
   CNImplies :: CNeutral a -> CValue a -> CNeutral a
 
 data GValue a where
@@ -92,8 +176,8 @@ data GNeutral a where
   GUnion :: GNeutral a -> GValue a -> GNeutral a
   GBind :: GNeutral a -> GAbstraction a -> GNeutral a
 
-newtype CAbstraction a = CAbstraction { runCAbstraction :: CValue a -> CValue a }
-newtype GAbstraction a = GAbstraction { runGAbtraction :: GValue a -> GValue a }
+newtype CAbstraction a = CAbstraction { runCAbstraction :: CValue a -> Fresh (CValue a) }
+newtype GAbstraction a = GAbstraction { runGAbtraction :: GValue a -> Fresh (GValue a) }
 
 type CEnv a = [(Name, CValue a)]
 type GEnv a = [(Name, GValue a)]
@@ -103,7 +187,7 @@ check (CVar v) z = undefined
 check (Check p) z = p z
 check (And x y) z = check x z && check y z
 check (Or x y) z = check x z || check y z
-check (Implies x y) z = check x z || not (check y z)
+-- check (Implies x f) z = check x z || not (check (f _) z)
 check (BoolLit b) _ = b
 
 -- TODO: Normalize first?
@@ -114,8 +198,33 @@ checkToGenerate f gen (Or x y) = Union (checkToGenerate f gen x) (checkToGenerat
 checkToGenerate f gen (Not x) = Pure $ gen `Gen.suchThat` (not . check x)
 checkToGenerate f gen (Implies x k) =
   Bind (checkToGenerate f gen x) (checkToGenerate f gen . k . f)
-checkToGenerate _ _ (BoolLit False) = mempty
+checkToGenerate _ _ (BoolLit False) = Pure $ oneof []
 checkToGenerate _ gen (BoolLit True) = Pure gen
+
+type Fresh = State Int
+
+fresh :: Fresh Name
+fresh = do
+  i <- get
+  modify succ
+  pure $ "x" ++ show i
+
+toGenerate :: Gen a -> CValue a -> Fresh (Generate Name a a)
+toGenerate gen = go
+  where
+    go = \case
+      CVNeutral n -> neutralToGenerate gen n
+      CVBoolLit False -> pure $ Pure $ oneof []
+      CVBoolLit True -> pure $ Pure gen
+      CVCheck f ->
+        toGenerate gen =<< (runCAbstraction f . CVNeutral . CNVar) =<< fresh
+
+neutralToGenerate :: Gen a -> CNeutral a -> Fresh (Generate Name a a)
+neutralToGenerate gen = go
+  where
+    go = \case
+      CNOr x y -> liftA2 Union (neutralToGenerate gen x) (toGenerate gen y)
+      -- CNNot x ->
 
 evalEnvC :: CEnv a -> Check v a -> CValue a
 evalEnvC = undefined
