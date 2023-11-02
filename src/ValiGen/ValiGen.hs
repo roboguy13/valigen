@@ -2,6 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module ValiGen.ValiGen
   where
@@ -15,9 +17,74 @@ import Data.Bifunctor
 import Data.Functor.Contravariant
 import Control.Monad
 import Control.Monad.State
-import Control.Applicative (Applicative(liftA2))
+import Control.Applicative
+
+import Data.Coerce
 
 import ValiGen.NF
+import Data.Monoid (Any)
+
+data ValiGen' a b c = ValiGen (a -> b -> Bool) (b -> Gen c)
+
+instance Semigroup (ValiGen' a b c) where
+  ValiGen f g <> ValiGen f' g' =
+    ValiGen (\x y -> f x y || f' x y) (\x -> oneof [g x, g' x])
+
+type ValiGen a = ValiGen' a a a
+
+-- foldrVG :: (a -> b -> ValiGen b) -> b -> [a] -> ValiGen b
+-- foldrVG _ z [] = ValiGen (const True) (pure z)
+
+lengthComp :: Predicate Int -> Predicate [a]
+lengthComp = undefined
+
+type LengthPred a = [a] -> Int -> Bool
+type LengthPred' a = Predicate ([a], Int)
+
+-- We want something like this, even though we can't *quite* have it:
+lpToGen :: LengthPred a -> Int -> [a]
+lpToGen = undefined
+
+lpValiGen :: LengthPred a -> ValiGen' [a] Int [a]
+lpValiGen p = ValiGen p undefined
+
+-- length is a monotone function... Maybe combining (>) with a monotone function, in general, gives some kind of generator?
+
+gtValiGen :: Gen a -> ValiGen' [a] Int [a]
+gtValiGen gen = ValiGen (\xs i -> length xs > i) (`replicateM` gen)
+
+data Later a = Now a | Step (Later a)
+
+mu :: (Enum a) => (a -> Bool) -> a -> Later a
+mu f x
+  | f x = Now x
+  | otherwise = Step $ mu f (succ x)
+
+-- genFilter (p . length) <$> replicateM n x
+--    =
+-- guard (p n) *> replicateM n x
+
+-- genFilter p <$> choose (lo, hi)
+--
+
+
+
+
+
+-- anyFoldr :: (a -> b -> Any) ->
+
+-- f = unfoldr
+
+-- lengthComp :: (Int -> Bool) -> [a] -> Bool
+-- lengthComp f = undefined
+
+-- length . (> 2)  -->  \case [] -> False; (x:xs) -> case xs of [] -> False; (y:ys) -> case ys of [] -> False; (z:zs) -> True
+
+
+-- genList ::
+
+-- length' :: ValiGen a -> [a] -> ValiGen [a]
+-- length' = undefined
 
 data Prim a where
   OneOf :: [a] -> Prim a

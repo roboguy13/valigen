@@ -44,8 +44,9 @@ example2''' = fmap EvenList $ do
   sz <- choose (0, n) -- TODO: Would like to somehow combine the `suchThat` with this line...
   replicateM sz (choose (1, 20)) `suchThat` ((> 50) . length)
 
--- choose (0, n) >>= \sz -> f sz `suchThat` ((> 50) . length)
--- choose (0, n) >>= \sz -> With (sz .> 50) (f sz)
+-- choose (0, n) >>= \sz -> VectorOf sz ... `suchThat` ((> 50) . length)
+-- choose (0, n) >>= \sz -> suchThat (VectorOf sz) ((> 50) . length)
+-- choose (0, n) >>= \sz -> With (sz .> 50) (VectorOf sz ...)
 --   ^ Needs to run the bind continuation with a dummy variable first, to get constraints?
 
 example2_ :: Gen EvenList
