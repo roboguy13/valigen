@@ -15,8 +15,11 @@ import Test.QuickCheck
 import Control.Monad.Coroutine
 import Control.Monad.Coroutine.SuspensionFunctors
 import Control.Monad.ST
+import Control.Monad.Logic
 import Data.STRef
 import Data.Functor
+
+import ValiGen.Nondet
 
 newtype Value a = Value (Maybe a)
   deriving (Functor, Applicative, Monad)
@@ -32,13 +35,14 @@ newtype Cell s a = Cell (STRef s (Value a))
 -- data BacktrackState =
 
 -- newtype Backtrack s a = Backtrack [Coroutine (Await (Cell s a)) (ST s) a]
+
   -- TODO: We probably need to be able to await *and* yield
-newtype Backtrack s a = Backtrack { getBacktrack :: Coroutine (Await ()) (ST s) [a] }
+newtype Backtrack s a = Backtrack { getBacktrack :: Coroutine (Await ()) (ST s) (Logic a) }
   deriving (Functor)
 
 instance Alternative (Backtrack s) where
-  empty = Backtrack $ pure []
-  Backtrack x <|> Backtrack y = Backtrack $ liftA2 (++) x y
+  empty = Backtrack $ pure empty
+  Backtrack x <|> Backtrack y = Backtrack $ liftA2 (<|>) x y
 
 instance Applicative (Backtrack s) where
   pure = Backtrack . pure . pure
@@ -49,17 +53,17 @@ instance Monad (Backtrack s) where
   Backtrack x >>= f = Backtrack $ do
     x' <- x
     -- TODO: This might be the place to implement the communication between sub-expressions (by await/yield)
-    concat <$> traverse (getBacktrack . f) x'
+    join <$> traverse (getBacktrack . f) x'
 
 liftST :: ST s a -> Backtrack s a
-liftST = Backtrack . lift . fmap (:[])
+liftST = Backtrack . lift . fmap pure
 
 readCell :: Cell s a -> Backtrack s a
 readCell cell@(Cell ref) =
   liftST (readSTRef ref) >>= \case
     Undefined ->
       -- Block
-      Backtrack (await $> [()]) *> readCell cell
+      Backtrack (await $> pure ()) *> readCell cell
     Defined x -> pure x
 
 writeCell :: Eq a => Cell s a -> a -> Backtrack s ()
