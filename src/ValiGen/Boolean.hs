@@ -57,6 +57,9 @@ newtype Alternating a = Alternating (a -> Bool)
 newtype Unrestricted a = Unrestricted (a -> Bool)
   deriving Contravariant via Predicate
 
+getUnrestricted :: Unrestricted a -> (a -> Bool)
+getUnrestricted = coerce
+
 getBoundaryET :: EventuallyTrue a -> a
 getBoundaryET (EventuallyTrue x) = x
 
@@ -89,11 +92,51 @@ regionUnion (Just (px, py)) (Just (qx, qy))
   | qx > py = Nothing
   | otherwise = Just (min px qx, max py qy)
 
+data BooleanTerm a
+  = TEventuallyTrue (EventuallyTrue a)
+  | TEventuallyFalse (EventuallyFalse a)
+  | TBounded (BoundedPred a)
+  | TCoBounded (CoBoundedPred a)
+  | TAnd (BooleanTerm a) (BooleanTerm a)
+  | TOr (BooleanTerm a) (BooleanTerm a)
+  | TNot (BooleanTerm a)
+  -- deriving (Show, Functor)
+
 class Boolean f g | f -> g where
   (.&&) :: Ord a => f a -> f a -> f a
   (.||) :: Ord a => f a -> f a -> f a
   notB :: f a -> g a
   unrestrict :: Ord a => f a -> Unrestricted a
+
+instance Boolean BooleanTerm BooleanTerm where
+  (.&&) = TAnd
+  (.||) = TOr
+  notB (TNot x) = x
+  notB (TEventuallyTrue x) = TEventuallyFalse (notB x)
+  notB (TEventuallyFalse x) = TEventuallyTrue (notB x)
+  notB (TBounded x) = TCoBounded (notB x)
+  notB (TCoBounded x) = TBounded (notB x)
+  notB (TAnd x y) = TOr (notB x) (notB y)
+  notB (TOr x y) = TAnd (notB x) (notB y)
+
+  unrestrict (TNot x) =
+    let Unrestricted f = unrestrict x
+    in
+    Unrestricted $ not . f
+  unrestrict (TEventuallyTrue x) = unrestrict x
+  unrestrict (TEventuallyFalse x) = unrestrict x
+  unrestrict (TBounded x) = unrestrict x
+  unrestrict (TCoBounded x) = unrestrict x
+  unrestrict (TAnd x y) =
+    let Unrestricted f = unrestrict x
+        Unrestricted g = unrestrict y
+    in
+    Unrestricted (\a -> f a && g a)
+  unrestrict (TOr x y) =
+    let Unrestricted f = unrestrict x
+        Unrestricted g = unrestrict y
+    in
+    Unrestricted (\a -> f a || g a)
 
 instance Boolean EventuallyTrue EventuallyFalse where
   EventuallyTrue x .&& EventuallyTrue y = EventuallyTrue (max x y)
