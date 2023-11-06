@@ -14,6 +14,9 @@ newtype CPS f a = CPS { (>>-) :: forall b. (a -> f b) -> f b }
 runCPS :: Pointed f => CPS f a -> f a
 runCPS x = x >>- point
 
+mkCPS :: Monad f => f a -> CPS f a
+mkCPS fa = CPS (fa >>=)
+
 instance Functor (CPS f) where
   fmap f x = x >>= (pure . f)
 
@@ -25,9 +28,19 @@ instance Monad (CPS f) where
   return = pure
   a >>= f = CPS $ \c -> a >>- \x -> f x >>- c
 
+instance (Pointed f, Foldable f) => Foldable (CPS f) where
+  foldMap f = foldMap f . runCPS
+
+instance (Pointed f, Traversable f, Monad f) => Traversable (CPS f) where
+  traverse f = fmap mkCPS . traverse f . runCPS
+
 class Nondet n where
   failure :: n a
   choice :: n a -> n a -> n a
+
+  choices :: [n a] -> n a
+  choices = foldr choice failure
+
 
 instance Nondet f => Alternative (CPS f) where
   empty  = CPS (const failure)
@@ -102,4 +115,26 @@ levelIter step a = Levels [(a >>- yieldB) ! d | d <- [0, step..]]
 
 iterDepth :: (Pointed n, Nondet n) =>
   Int -> CPS (BoundedSearch n) a -> n a
-iterDepth step = foldr choice failure . levels . levelIter step
+iterDepth step = choices . levels . levelIter step
+
+----
+
+data Tree a = Leaf a | Node [Tree a]
+  deriving (Show, Functor)
+
+-- instance Applicative Tree where
+--   pure = Leaf
+--   (<*>) = ap
+
+-- instance Monad Tree where
+--   return = pure
+--   Leaf x >>= f = f x
+--   Node xs >>= f = Node $ map (>>= f) xs
+
+instance Nondet Tree where
+  failure = Node []
+  choice x y = Node [x, y]
+  choices = Node
+
+instance Pointed Tree where
+  point = Leaf
