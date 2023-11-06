@@ -32,20 +32,20 @@ import Data.Coerce
 import Control.Applicative
 
 -- | exists n. forall x > n. p x
-data EventuallyTrue a = EventuallyTrue (a -> Bool) a
+newtype EventuallyTrue a = EventuallyTrue a
 
 -- | exists n. forall x > n. !(p x)
-data EventuallyFalse a = EventuallyFalse (a -> Bool) a
+newtype EventuallyFalse a = EventuallyFalse a
 
 -- | It's going to be False, then it will be True for a while and finally it will be False forever
 -- For example: \x -> x > 2 && x < 10
 -- It might also *always* be False (this is a sort of degenerate case).
 --
 -- exists m n. (forall m < x < n. p x) /\ (forall x <= m. !(p x)) /\ (forall x >= n. !(p x))
-data BoundedPred a = BoundedPred (a -> Bool) (Maybe (a, a)) -- TODO: Should this be [] instead of Maybe?
+newtype BoundedPred a = BoundedPred (Maybe (a, a)) -- TODO: Should this be [] instead of Maybe?
 
 -- | Contrast with `BoundedPred`. An example of `CoBoundedPred` is \x -> x <= 2 || x >= 10
-data CoBoundedPred a = CoBoundedPred (a -> Bool) (Maybe (a, a)) -- NOTE: This has the region where it is *False*
+newtype CoBoundedPred a = CoBoundedPred (Maybe (a, a)) -- NOTE: This has the region where it is *False*
 
 -- | Example: \x -> x `mod` 5 == 0
 -- At any point, there is always another True. Also, there is always another False.
@@ -58,13 +58,13 @@ newtype Unrestricted a = Unrestricted (a -> Bool)
   deriving Contravariant via Predicate
 
 getBoundaryET :: EventuallyTrue a -> a
-getBoundaryET (EventuallyTrue _ x) = x
+getBoundaryET (EventuallyTrue x) = x
 
 getBoundaryEF :: EventuallyFalse a -> a
 getBoundaryEF = getBoundaryET . notB
 
 getRegion :: BoundedPred a -> Maybe (a, a)
-getRegion (BoundedPred _ r) = r
+getRegion (BoundedPred r) = r
 
 getCoRegion :: CoBoundedPred a -> Maybe (a, a)
 getCoRegion = getRegion . notB
@@ -72,8 +72,8 @@ getCoRegion = getRegion . notB
 getNextTrue :: Alternating a -> a -> a
 getNextTrue = undefined
 
-getNextFalse :: Alternating a -> a -> a
-getNextFalse alt = getNextTrue (notB alt)
+-- getNextFalse :: Alternating a -> a -> a
+-- getNextFalse alt = getNextTrue (notB alt)
 
 regionIntersect :: Ord a => Maybe (a, a) -> Maybe (a, a) -> Maybe (a, a)
 regionIntersect _ Nothing = Nothing
@@ -93,31 +93,33 @@ class Boolean f g | f -> g where
   (.&&) :: Ord a => f a -> f a -> f a
   (.||) :: Ord a => f a -> f a -> f a
   notB :: f a -> g a
-  unrestrict :: f a -> Unrestricted a
+  unrestrict :: Ord a => f a -> Unrestricted a
 
 instance Boolean EventuallyTrue EventuallyFalse where
-  EventuallyTrue f x .&& EventuallyTrue g y = EventuallyTrue (liftA2 (&&) f g) (max x y)
-  EventuallyTrue f x .|| EventuallyTrue g y = EventuallyTrue (liftA2 (||) f g) (min x y)
-  notB (EventuallyTrue f x) = EventuallyFalse (not . f) x
-  unrestrict (EventuallyTrue f _) = Unrestricted f
+  EventuallyTrue x .&& EventuallyTrue y = EventuallyTrue (max x y)
+  EventuallyTrue x .|| EventuallyTrue y = EventuallyTrue (min x y)
+  notB (EventuallyTrue x) = EventuallyFalse x
+  unrestrict (EventuallyTrue x) = Unrestricted (>= x)
 
 instance Boolean EventuallyFalse EventuallyTrue where
-  EventuallyFalse f x .&& EventuallyFalse g y = EventuallyFalse (liftA2 (&&) f g) (min x y)
-  EventuallyFalse f x .|| EventuallyFalse g y = EventuallyFalse (liftA2 (||) f g) (max x y)
-  notB (EventuallyFalse f x) = EventuallyTrue (not . f) x
-  unrestrict (EventuallyFalse f _) = Unrestricted f
+  EventuallyFalse x .&& EventuallyFalse y = EventuallyFalse (min x y)
+  EventuallyFalse x .|| EventuallyFalse y = EventuallyFalse (max x y)
+  notB (EventuallyFalse x) = EventuallyTrue x
+  unrestrict (EventuallyFalse x) = Unrestricted (< x)
 
 instance Boolean BoundedPred CoBoundedPred where
-  BoundedPred f x .&& BoundedPred g y = BoundedPred (liftA2 (&&) f g) (regionIntersect x y)
-  BoundedPred f x .|| BoundedPred g y = BoundedPred (liftA2 (||) f g) (regionUnion x y)
-  notB (BoundedPred f x) = CoBoundedPred (not . f) x
-  unrestrict (BoundedPred f _) = Unrestricted f
+  BoundedPred x .&& BoundedPred y = BoundedPred (regionIntersect x y)
+  BoundedPred x .|| BoundedPred y = BoundedPred (regionUnion x y)
+  notB (BoundedPred x) = CoBoundedPred x
+  unrestrict (BoundedPred Nothing) = Unrestricted (const False)
+  unrestrict (BoundedPred (Just (x, y))) = Unrestricted (\n -> n >= x && x < y)
 
 instance Boolean CoBoundedPred BoundedPred where
-  CoBoundedPred f x .&& CoBoundedPred g y = CoBoundedPred (liftA2 (&&) f g) (regionUnion x y)
-  CoBoundedPred f x .|| CoBoundedPred g y = CoBoundedPred (liftA2 (||) f g) (regionIntersect x y)
-  notB (CoBoundedPred f x) = BoundedPred (not . f) x
-  unrestrict (CoBoundedPred f _) = Unrestricted f
+  CoBoundedPred x .&& CoBoundedPred y = CoBoundedPred (regionUnion x y)
+  CoBoundedPred x .|| CoBoundedPred y = CoBoundedPred (regionIntersect x y)
+  notB (CoBoundedPred x) = BoundedPred x
+  unrestrict (CoBoundedPred Nothing) = Unrestricted (const True)
+  unrestrict (CoBoundedPred (Just (x, y))) = Unrestricted (\n -> n < x || n >= y)
 
 -- instance Boolean Alternating Alternating where
 --   Alternating f .&& Alternating g = Alternating (liftA2 (&&) f g)
