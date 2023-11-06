@@ -35,3 +35,25 @@ instance GenInt (BooleanTerm Int) where
   genInt (TAnd p q) = genInt (TOr (notB p) (notB q)) -- TODO: Does this work well enough?
   genInt (TOr p q) = oneof [genInt p, genInt q]
   genInt (TNot p) = genInt (notB p)
+
+ge :: Int -> BooleanTerm Int
+ge = TEventuallyTrue . EventuallyTrue
+
+gt :: Int -> BooleanTerm Int
+gt = TEventuallyTrue . EventuallyTrue . succ
+
+le :: Int -> BooleanTerm Int
+le = TEventuallyFalse . EventuallyFalse . pred
+
+lt :: Int -> BooleanTerm Int
+lt = TEventuallyFalse . EventuallyFalse
+
+-- | For example:
+--     require (`mod` 2) (lt 1)
+--   becomes
+--     map (*2) (genInt anything)
+--
+--   and
+--     genInt (require (coPrime ))
+require :: (Int -> Int) -> BooleanTerm Int -> Gen Int
+require = undefined

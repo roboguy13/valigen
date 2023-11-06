@@ -95,11 +95,14 @@ regionUnion (Just (px, py)) (Just (qx, qy))
 data BooleanTerm a
   = TEventuallyTrue (EventuallyTrue a)
   | TEventuallyFalse (EventuallyFalse a)
-  | TBounded (BoundedPred a)
-  | TCoBounded (CoBoundedPred a)
+
   | TAnd (BooleanTerm a) (BooleanTerm a)
   | TOr (BooleanTerm a) (BooleanTerm a)
   | TNot (BooleanTerm a)
+
+  -- TODO: Do we need these?
+  | TBounded (BoundedPred a)
+  | TCoBounded (CoBoundedPred a)
   -- deriving (Show, Functor)
 
 class Boolean f g | f -> g where
