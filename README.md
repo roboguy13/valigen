@@ -8,12 +8,12 @@ Some examples of transformations we want, written in Haskell-like pseudocode.
 
 filter (< 5) (choose (1, 10)) ===>  choose (1, 4)
 
-### Range intersection
+### Interval intersection
 
     filter (And (> 2) (< 7)) (choose (1, 10))  ===>  intersect (choose (3, 10)) (choose (1, 6))
                                                     = choose (3, 6)
 
-### Range union
+### Interval union
 
     filter (Or (< 3) (And (> 4) (< 9))) (choose (1, 10))  ===>  union (choose (1, 2)) (choose (5, 8))
 
