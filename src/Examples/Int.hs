@@ -13,3 +13,7 @@ test1 =
 
 test1'valid :: Property
 test1'valid = forAll test1 $ \x -> x >= 5 && x < 50
+
+test1'filter :: Property
+test1'filter = forAll (choose (minBound, maxBound)) $ \(x :: Int) ->
+  (x >= 5 && x < 50) ==> True :: Property
