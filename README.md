@@ -11,7 +11,7 @@ filter (< 5) (choose (1, 10)) ===>  choose (1, 4)
 ### Interval intersection
 
     filter (And (> 2) (< 7)) (choose (1, 10))  ===>  intersect (choose (3, 10)) (choose (1, 6))
-                                                    = choose (3, 6)
+                                                     = choose (3, 6)
 
 ### Interval union
 

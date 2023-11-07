@@ -72,8 +72,8 @@ getRegion (BoundedPred r) = r
 getCoRegion :: CoBoundedPred a -> Maybe (a, a)
 getCoRegion = getRegion . notB
 
-getNextTrue :: Alternating a -> a -> a
-getNextTrue = undefined
+-- getNextTrue :: Alternating a -> a -> a
+-- getNextTrue = undefined
 
 -- getNextFalse :: Alternating a -> a -> a
 -- getNextFalse alt = getNextTrue (notB alt)
