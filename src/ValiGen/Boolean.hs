@@ -33,9 +33,11 @@ import Control.Applicative
 
 -- | exists n. forall x > n. p x
 newtype EventuallyTrue a = EventuallyTrue a
+  deriving (Show)
 
 -- | exists n. forall x > n. !(p x)
 newtype EventuallyFalse a = EventuallyFalse a
+  deriving (Show)
 
 -- | It's going to be False, then it will be True for a while and finally it will be False forever
 -- For example: \x -> x > 2 && x < 10
@@ -43,9 +45,11 @@ newtype EventuallyFalse a = EventuallyFalse a
 --
 -- exists m n. (forall m < x < n. p x) /\ (forall x <= m. !(p x)) /\ (forall x >= n. !(p x))
 newtype BoundedPred a = BoundedPred (Maybe (a, a)) -- TODO: Should this be [] instead of Maybe?
+  deriving (Show)
 
 -- | Contrast with `BoundedPred`. An example of `CoBoundedPred` is \x -> x <= 2 || x >= 10
 newtype CoBoundedPred a = CoBoundedPred (Maybe (a, a)) -- NOTE: This has the region where it is *False*
+  deriving (Show)
 
 -- | Example: \x -> x `mod` 5 == 0
 -- At any point, there is always another True. Also, there is always another False.
@@ -103,6 +107,7 @@ data BooleanTerm a
   -- TODO: Do we need these?
   | TBounded (BoundedPred a)
   | TCoBounded (CoBoundedPred a)
+  deriving (Show)
   -- deriving (Show, Functor)
 
 class Boolean f g | f -> g where

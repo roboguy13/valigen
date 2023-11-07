@@ -24,3 +24,12 @@ test2 =
 
 test2'valid :: Property
 test2'valid = forAll test2 $ \(x, y) -> x > 0 && y > x
+
+test3 :: Gen Int
+test3 =
+  genInt ((ge 5 `TAnd` lt 50)
+          `TOr`
+          gt (maxBound - 20))
+
+test3'valid :: Property
+test3'valid = forAll test3 $ \x -> (x >= 5 && x < 50) || x > maxBound - 20
