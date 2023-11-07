@@ -24,6 +24,14 @@ intersects :: Basic -> Basic -> Bool
 genInt :: ToOpen a => a -> Gen Int
 genInt = oneof . map choose . toOpen
 
+type ProductTerm a = (BooleanTerm a, a -> BooleanTerm a)
+
+genPair :: ProductTerm Int -> Gen (Int, Int)
+genPair (x, f) = do
+  a <- genInt x
+  b <- genInt (f a)
+  pure (a, b)
+
 ge :: Int -> BooleanTerm Int
 ge = TEventuallyTrue . EventuallyTrue
 

@@ -17,3 +17,10 @@ test1'valid = forAll test1 $ \x -> x >= 5 && x < 50
 test1'filter :: Property
 test1'filter = forAll (choose (minBound, maxBound)) $ \(x :: Int) ->
   (x >= 5 && x < 50) ==> True :: Property
+
+test2 :: Gen (Int, Int)
+test2 =
+  genPair (gt 0, \x -> gt x)
+
+test2'valid :: Property
+test2'valid = forAll test2 $ \(x, y) -> x > 0 && y > x
