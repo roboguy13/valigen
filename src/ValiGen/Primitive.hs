@@ -23,7 +23,7 @@ primitiveRefine (Gt x) = refinedFromDomain (Range (x+1, maxBound))
 primitiveRefine (Ge x) = refinedFromDomain (Range (x, maxBound))
 primitiveRefine (DivisibleBy x) = refinedFromMap (*x) invMul
   where
-    -- invMul 1 = 1
+    invMul 1 = 1
     invMul a = a `div` x
 
 data Boolean a = Prim a | And (Boolean a) (Boolean a) | Or (Boolean a) (Boolean a)
