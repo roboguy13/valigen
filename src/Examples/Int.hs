@@ -42,3 +42,10 @@ test5 = refined (ge 1 /\ le 20 /\ divisibleBy 2 /\ divisibleBy 5)
 test5'valid :: Property
 test5'valid =
   forAll test5 $ \x -> x >= 1 && x <= 20 && even x && (x `mod` 5) == 0
+
+test6 :: Gen Int
+test6 = refined (ge 1 /\ le 20 /\ (divisibleBy 2 \/ divisibleBy 5))
+
+test6'valid :: Property
+test6'valid =
+  forAll test5 $ \x -> x >= 1 && x <= 20 && (even x || (x `mod` 5) == 0)

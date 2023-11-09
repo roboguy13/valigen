@@ -33,11 +33,18 @@ type Boolean' a = Boolean (Primitive a)
 
 booleanRefine :: Boolean' Int -> [RefinedInt]
 booleanRefine (Prim p) = [primitiveRefine p]
+
 booleanRefine (And x y) = do
-  -- We distribute the @And@ over the @Or@s
+  -- We distribute the @And@ over the @Or@s. The list is a list of disjuncts and
+  -- (<>) behaves as a kind of conjunction.
+  --
+  -- Input:  And [x1, x2, ..., xN] [y1, y2, ..., yM]
+  -- Output: [x1 <> y1, x1 <> y2, x2 <> y1, x2 <> y2, ..., xN <> yM]
+
   a <- booleanRefine x
   b <- booleanRefine y
-  pure (a <> b) -- Here, (<>) is a kind of conjunction
+  pure (a <> b)
+
 booleanRefine (Or x y) = booleanRefine x ++ booleanRefine y
 
 fromRefine :: [RefinedInt] -> Gen Int
