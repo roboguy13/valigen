@@ -37,7 +37,7 @@ booleanRefine (And x y) = do
   -- We distribute the @And@ over the @Or@s
   a <- booleanRefine x
   b <- booleanRefine y
-  pure (a <> b)
+  pure (a <> b) -- Here, (<>) is a kind of conjunction
 booleanRefine (Or x y) = booleanRefine x ++ booleanRefine y
 
 fromRefine :: [RefinedInt] -> Gen Int
