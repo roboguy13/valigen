@@ -37,8 +37,8 @@ test4'valid =
   forAll test4 $ \x -> x >= 100 && (x `mod` 7) == 0 && x < 700
 
 test5 :: Gen Int
-test5 = refined (ge 1 /\ le 10 /\ divisibleBy 2)
+test5 = refined (ge 1 /\ le 20 /\ divisibleBy 2 /\ divisibleBy 5)
 
 test5'valid :: Property
 test5'valid =
-  forAll test5 $ \x -> x >= 1 && x <= 10 && even x
+  forAll test5 $ \x -> x >= 1 && x <= 10 && even x && (x `mod` 5) == 0
