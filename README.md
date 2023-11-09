@@ -6,7 +6,7 @@ Some examples of transformations we want, written in Haskell-like pseudocode.
 
 ### Simple filter
 
-filter (< 5) (choose (1, 10)) ===>  choose (1, 4)
+    filter (< 5) (choose (1, 10)) ===>  choose (1, 4)
 
 ### Interval intersection
 
