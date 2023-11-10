@@ -35,8 +35,13 @@ blackHeight t output =
     Leaf -> writeCellSemi output (Max 1) $> ()
     Node (color, _) left right -> do
       let increment = case color of Black -> 1; Red -> 0
+
+      -- A shared cell for the two recursive calls
       c <- mkUnknown
+
+      -- Write the contents of c into our output cell
       watch c $ \x -> writeDefinedCellSemi output (fmap (fmap (+ increment)) x) $> ()
+
       blackHeight left c
       blackHeight right c
 
@@ -94,3 +99,5 @@ getBlackHeight (Node (c, _) left right) =
       case c of
         Black -> 1
         Red -> 0
+
+-- getBlackHeight' :: ColorTree () --> Output (Max Int)
