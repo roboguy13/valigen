@@ -114,6 +114,7 @@ readCell :: MonadST m =>
   Cell m a -> m (Defined a)
 readCell (Cell ref) = snd <$> liftST (readSTRef ref)
 
+-- TODO: Change this type to get rid of the 'r' type variable
 watch :: forall m a r. MonadST m =>
   Cell m a -> (Defined a -> m r) -> m r
 watch (Cell ref) k = do
