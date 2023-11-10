@@ -19,6 +19,7 @@ import Data.Functor
 import Test.QuickCheck
 
 import Data.Coerce
+import Control.Lens (only)
 
 data Tree a = Leaf | Node a (Tree a) (Tree a)
   deriving (Show, Eq)
@@ -28,13 +29,17 @@ data Color = Red | Black
 
 type ColorTree a = Tree (Color, a)
 
--- | Bidirectional black height checker/generator
+-- | Bidirectional red-black tree black height checker/generator
 blackHeightBi :: STCell s (ColorTree a) -> STCell s (Max Int) -> ST s (Gen (ColorTree ()))
 blackHeightBi cellT cellH = do
   watch cellT $ \case
     Known t -> blackHeight t cellH
     _ -> pure ()
 
+  -- TODO: This probably only works if we have all the data we need to
+  -- build the Gen *right now*. If we only get some of the data later, we
+  -- have probably already made the generator always discard.
+  -- How do we fix this?
   watch cellH $ \case
     Known (Max h) -> pure $ withBlackHeight h
     _ -> pure discard
