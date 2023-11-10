@@ -11,25 +11,54 @@ import ValiGen.Propagator
 import Data.Semigroup
 
 import Control.Monad.ST
+import Control.Monad.ST.Class
 import Data.STRef
 
 import Data.Functor
 
 import Test.QuickCheck
 
+import Data.Coerce
+
 data Tree a = Leaf | Node a (Tree a) (Tree a)
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Color = Red | Black
-  deriving (Show)
+  deriving (Show, Eq)
 
 type ColorTree a = Tree (Color, a)
+
+-- | Bidirectional black height checker/generator
+blackHeightBi :: STCell s (ColorTree a) -> STCell s (Max Int) -> ST s (Gen (ColorTree ()))
+blackHeightBi cellT cellH = do
+  watch cellT $ \case
+    Known t -> blackHeight t cellH
+    _ -> pure ()
+
+  watch cellH $ \case
+    Known (Max h) -> pure $ withBlackHeight h
+    _ -> pure discard
+
+blackHeightBi1 :: ColorTree a -> Int
+blackHeightBi1 t = runST $ do
+  cellT <- mkKnown t
+  cellH <- mkUnknown
+  blackHeightBi cellT cellH
+  readCell cellH >>= \case
+    Known (Max n) -> pure n
+    x -> error $ "blackHeightBi1: " ++ show x
+
+blackHeightBi2 :: Int -> Gen (ColorTree ())
+blackHeightBi2 h = runST $ do
+  cellT <- mkUnknown
+  cellH <- mkKnown (Max h)
+  blackHeightBi cellT cellH
 
 getColor :: ColorTree a -> Color
 getColor Leaf = Black
 getColor (Node (c, _) _ _) = c
 
-blackHeight :: ColorTree a -> Cell s (Max Int) -> ST s ()
+blackHeight :: ColorTree a -> STCell s (Max Int) -> ST s ()
 blackHeight t output =
   case t of
     Leaf -> writeCellSemi output (Max 1) $> ()
@@ -59,7 +88,7 @@ getBlackHeightCell t = runST $ do
 -- isBlackHeight Leaf _ = pure False
 -- isBlackHeight (Node (Black, _) left right) n =
 --   undefined
---   -- n == max a b
+--   -- n == max a
 --   -- &&
 --   -- isBlackHeight left a
 --   -- &&
@@ -89,6 +118,10 @@ withBlackHeight'valid n =
 getBlackHeightCell'valid :: Int -> Property
 getBlackHeightCell'valid n =
   forAll (withBlackHeight n) $ \t -> getBlackHeightCell t == n
+
+blackHeightBi1'valid :: Int -> Property
+blackHeightBi1'valid n =
+  forAll (withBlackHeight n) $ \t -> blackHeightBi1 t == n
 
 getBlackHeight :: ColorTree a -> Int
 getBlackHeight Leaf = 1

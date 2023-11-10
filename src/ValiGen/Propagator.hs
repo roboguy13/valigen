@@ -1,12 +1,12 @@
 -- |
 
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module ValiGen.Propagator where
 
 import Data.STRef
 import Control.Monad.ST
+import Control.Monad.ST.Class
 import Control.Monad.Trans
 
 import Control.Applicative
@@ -14,6 +14,8 @@ import Control.Monad
 import Data.Functor
 
 import Data.Coerce
+
+import Test.QuickCheck
 
 data Defined a
   = Inconsistent
@@ -40,6 +42,14 @@ newtype LiftedSemigroup a = LiftedSemigroup { getLiftedSemigroup :: a }
 instance Semigroup a => PartialSemigroup (LiftedSemigroup a) where
   x <<>> y = Known (x <> y)
 
+newtype Flat a = Flat { getFlat :: a }
+  deriving (Show, Functor, Eq, Ord)
+
+instance Eq a => PartialSemigroup (Flat a) where
+  x <<>> y
+    | x == y = Known x
+    | otherwise = Inconsistent
+
 (<<.>>) :: PartialSemigroup a => Defined a -> Defined a -> Defined a
 (<<.>>) Inconsistent _ = Inconsistent
 (<<.>>) _ Inconsistent = Inconsistent
@@ -59,31 +69,36 @@ instance Semigroup a => Semigroup (Defined a) where
 instance Semigroup a => Monoid (Defined a) where
   mempty = Unknown
 
-newtype Cell s a = Cell { getCell :: STRef s (ST s (), Defined a) }
+newtype Cell m a = Cell { getCell :: STRef (World m) (m (), Defined a) }
 
-mkUnknown :: ST s (Cell s a)
-mkUnknown = Cell <$> newSTRef (pure (), Unknown)
+mkUnknown :: MonadST m =>
+  m (Cell m a)
+mkUnknown = Cell <$> liftST (newSTRef (pure (), Unknown))
 
-mkKnown :: a -> ST s (Cell s a)
-mkKnown = fmap Cell . newSTRef . (pure () ,) . Known
+mkKnown :: MonadST m =>
+  a -> m (Cell m a)
+mkKnown = fmap Cell . liftST . newSTRef . (pure () ,) . Known
 
-writeCell :: PartialSemigroup a => Cell s a -> a -> ST s (Maybe ())
+writeCell :: (MonadST m, PartialSemigroup a) =>
+  Cell m a -> a -> m (Maybe ())
 writeCell c = writeDefinedCell c . Known
 
-writeDefinedCell :: PartialSemigroup a => Cell s a -> Defined a -> ST s (Maybe ())
+writeDefinedCell :: (MonadST m, PartialSemigroup a) =>
+  Cell m a -> Defined a -> m (Maybe ())
 writeDefinedCell (Cell ref) x = do
-  (act, z) <- readSTRef ref
+  (act, z) <- liftST $ readSTRef ref
 
   case x <<.>> z of
     Inconsistent -> pure Nothing
     v -> do
-      writeSTRef ref (act, v)
+      liftST $ writeSTRef ref (act, v)
       act
       pure $ Just ()
 
-writeDefinedCellSemi :: forall s a. Semigroup a => Cell s a -> Defined a -> ST s (Maybe ())
+writeDefinedCellSemi :: forall m a. (MonadST m, Semigroup a) =>
+  Cell m a -> Defined a -> m (Maybe ())
 writeDefinedCellSemi c x =
-  let c' :: Cell s (LiftedSemigroup a)
+  let c' :: Cell m (LiftedSemigroup a)
       c' = coerce c
 
       x' :: Defined (LiftedSemigroup a)
@@ -91,26 +106,32 @@ writeDefinedCellSemi c x =
   in
   writeDefinedCell c' x'
 
-writeCellSemi :: Semigroup a => Cell s a -> a -> ST s (Maybe ())
+writeCellSemi :: (MonadST m, Semigroup a) =>
+  Cell m a -> a -> m (Maybe ())
 writeCellSemi c = writeDefinedCellSemi c . Known
 
-readCell :: Cell s a -> ST s (Defined a)
-readCell (Cell ref) = snd <$> readSTRef ref
+readCell :: MonadST m =>
+  Cell m a -> m (Defined a)
+readCell (Cell ref) = snd <$> liftST (readSTRef ref)
 
-watch :: forall s a. Cell s a -> (Defined a -> ST s ()) -> ST s ()
+watch :: forall m a r. MonadST m =>
+  Cell m a -> (Defined a -> m r) -> m r
 watch (Cell ref) k = do
-  (act, x) <- readSTRef ref
-  writeSTRef ref (act *> go, x)
+  (act, x) <- liftST $ readSTRef ref
+  liftST $ writeSTRef ref (act *> go $> (), x)
   go
   where
-    go :: ST s ()
+    go :: m r
     go = do
-      (_, z) <- readSTRef ref
+      (_, z) <- liftST $ readSTRef ref
       k z
 
-unarySemi :: forall s a b. Semigroup b => (a -> b) -> Cell s a -> Cell s b -> ST s ()
+-- watchGen :: forall s a. Cell s a -> (Defined a -> Gen a) -> ST s ()
+-- watchGen = undefined
+
+unarySemi :: forall m a b. Semigroup b => (a -> b) -> Cell m a -> Cell m b -> m ()
 unarySemi f cX cR =
-  let cR' :: Cell s (LiftedSemigroup b)
+  let cR' :: Cell m (LiftedSemigroup b)
       cR' = coerce cR
 
       f' :: a -> LiftedSemigroup b
@@ -118,9 +139,9 @@ unarySemi f cX cR =
   in
   unarySemi f' cX cR'
 
-binarySemi :: forall s a b c. Semigroup c => (a -> b -> c) -> Cell s a -> Cell s b -> Cell s c -> ST s ()
+binarySemi :: forall m a b c. Semigroup c => (a -> b -> c) -> Cell m a -> Cell m b -> Cell m c -> m ()
 binarySemi f cX cY cR =
-  let cR' :: Cell s (LiftedSemigroup c)
+  let cR' :: Cell m (LiftedSemigroup c)
       cR' = coerce cR
 
       f' :: a -> b -> LiftedSemigroup c
@@ -128,29 +149,35 @@ binarySemi f cX cY cR =
   in
   binarySemi f' cX cY cR'
 
-unary :: forall s a b. PartialSemigroup b => (a -> b) -> Cell s a -> Cell s b -> ST s ()
+unary :: forall m a b. (MonadST m, PartialSemigroup b) =>
+  (a -> b) -> Cell m a -> Cell m b -> m ()
 unary f cX cR =
   watch cX go
   where
-    go :: Defined a -> ST s ()
+    go :: Defined a -> m ()
     go (Known x) = do
       writeCell cR (f x)
       pure ()
     go _ = pure ()
 
-binary :: forall s a b c. PartialSemigroup c => (a -> b -> c) -> Cell s a -> Cell s b -> Cell s c -> ST s ()
+binary :: forall m a b c. (MonadST m, PartialSemigroup c) =>
+  (a -> b -> c) -> Cell m a -> Cell m b -> Cell m c -> m ()
 binary f cX cY cR = do
   watch cX goX
   watch cY goY
   where
-    goX :: Defined a -> ST s ()
+    goX :: Defined a -> m ()
     goX x = do
       y <- readCell cY
       writeDefinedCell cR (liftA2 f x y)
       pure ()
 
-    goY :: Defined b -> ST s ()
+    goY :: Defined b -> m ()
     goY y = do
       x <- readCell cX
       writeDefinedCell cR (liftA2 f x y)
       pure ()
+
+type STCell s = Cell (ST s)
+
+-- type CellGen m a = Cell m (Either (Gen a) a)

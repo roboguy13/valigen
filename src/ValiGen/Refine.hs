@@ -19,7 +19,6 @@ import Control.Applicative
 import Test.QuickCheck
 
 import Data.Functor.Product
-import GHC.Tc.Solver (InferMode)
 
 -- | Adjoin a point to represent infinity and a point to represent negative infinity
 data TwoPoint a
