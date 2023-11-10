@@ -130,7 +130,7 @@ watch (Cell ref) k = do
 -- watchGen :: forall s a. Cell s a -> (Defined a -> Gen a) -> ST s ()
 -- watchGen = undefined
 
-unarySemi :: forall m a b. Semigroup b => (a -> b) -> Cell m a -> Cell m b -> m ()
+unarySemi :: forall m a b. (MonadST m, Semigroup b) => (a -> b) -> Cell m a -> Cell m b -> m ()
 unarySemi f cX cR =
   let cR' :: Cell m (LiftedSemigroup b)
       cR' = coerce cR
@@ -138,9 +138,9 @@ unarySemi f cX cR =
       f' :: a -> LiftedSemigroup b
       f' = coerce f
   in
-  unarySemi f' cX cR'
+  unary f' cX cR'
 
-binarySemi :: forall m a b c. Semigroup c => (a -> b -> c) -> Cell m a -> Cell m b -> Cell m c -> m ()
+binarySemi :: forall m a b c. (MonadST m, Semigroup c) => (a -> b -> c) -> Cell m a -> Cell m b -> Cell m c -> m ()
 binarySemi f cX cY cR =
   let cR' :: Cell m (LiftedSemigroup c)
       cR' = coerce cR
@@ -148,7 +148,7 @@ binarySemi f cX cY cR =
       f' :: a -> b -> LiftedSemigroup c
       f' = coerce f
   in
-  binarySemi f' cX cY cR'
+  binary f' cX cY cR'
 
 unary :: forall m a b. (MonadST m, PartialSemigroup b) =>
   (a -> b) -> Cell m a -> Cell m b -> m ()
@@ -179,6 +179,16 @@ binary f cX cY cR = do
       writeDefinedCell cR (liftA2 f x y)
       pure ()
 
-type STCell s = Cell (ST s)
+data Val a = GenVal (Gen a) | RegularVal a
+  deriving (Functor)
 
--- type CellGen m a = Cell m (Either (Gen a) a)
+instance PartialSemigroup a => PartialSemigroup (Val a) where
+  GenVal _ <<>> RegularVal _ = Inconsistent
+  RegularVal _ <<>> GenVal _ = Inconsistent
+
+  RegularVal x <<>> RegularVal y = fmap RegularVal (x <<>> y)
+  GenVal _ <<>> GenVal _ = Inconsistent
+
+type STCell s = Cell (ST s)
+type CellGen m a = Cell m (Val a)
+type STCellGen s a = CellGen (ST s) a

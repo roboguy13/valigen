@@ -30,23 +30,28 @@ data Color = Red | Black
 type ColorTree a = Tree (Color, a)
 
 -- | Bidirectional red-black tree black height checker/generator
-blackHeightBi :: STCellGen s (Flat (ColorTree ())) -> STCell s (Max Int) -> ST s ()
+blackHeightBi :: STCellGen s (ColorTree a) -> STCell s (Max Int) -> ST s (Gen (ColorTree ()))
 blackHeightBi cellT cellH = do
+  -- TODO: This probably only works if we have all the data we need to
+  -- build the Gen *right now*. If we only get some of the data later, we
+  -- have probably already made the generator always discard.
+  -- How do we fix this?
+  -- It's like we need a second kind of output for generators,
+  -- which can be rerun similar to how "regular" propagator watches
+  -- can be rerun.
   watch cellH $ \case
-    Known (Max h) -> do
-      writeCell cellT $ GenVal $ Flat <$> withBlackHeight h
-      pure ()
-    _ -> pure ()
+    Known (Max h) -> pure $ withBlackHeight h
+    _ -> pure discard
 
   watch cellT $ \case
-    Known (RegularVal t) -> blackHeight (getFlat t) cellH
-    Known (GenVal gT) -> pure ()
+    Known (RegularVal t) -> blackHeight t cellH
+    Known (GenVal gT) -> error "blackHeightBi: GenVal"
     _ -> pure ()
 
 
-blackHeightBi1 :: ColorTree () -> Int
+blackHeightBi1 :: ColorTree a -> Int
 blackHeightBi1 t = runST $ do
-  cellT <- mkKnown (RegularVal (Flat t))
+  cellT <- mkKnown t
   cellH <- mkUnknown
   blackHeightBi cellT cellH
   readCell cellH >>= \case
@@ -58,8 +63,6 @@ blackHeightBi2 h = runST $ do
   cellT <- mkUnknown
   cellH <- mkKnown (Max h)
   blackHeightBi cellT cellH
-  readCell cellT >>= \case
-    Known (GenVal g) -> pure $ fmap getFlat g
 
 getColor :: ColorTree a -> Color
 getColor Leaf = Black
