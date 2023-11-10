@@ -39,7 +39,7 @@ blackHeight t output =
       -- A shared cell for the two recursive calls
       c <- mkUnknown
 
-      -- Write the contents of c into our output cell
+      -- Write the (possibly incremented) contents of c into our output cell
       watch c $ \x -> writeDefinedCellSemi output (fmap (fmap (+ increment)) x) $> ()
 
       blackHeight left c
