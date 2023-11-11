@@ -28,6 +28,8 @@ import Data.Coerce
 import Control.Lens (only, rewrite)
 
 import Control.Monad
+import Control.Monad.State
+
 import Data.Monoid
 
 data Tree a = Leaf | Node a (Tree a) (Tree a)
@@ -54,36 +56,91 @@ instance ModeC Filter where
 instance ModeC Generate where
   getMode = GenerateS
 
-newtype ValiGen (mode :: Mode) s a where
-  ValiGen :: ST s a -> ValiGen mode s a
-  deriving (Functor, Applicative, Monad, MonadST)
+type MaybeGen a = Maybe (Gen a)
 
-newtype Test s a = Test (ST s a)
+data ValiGen (mode :: Mode) s g a where
+  ValidateVG :: ST s a -> ValiGen Filter s g a
+  -- GenVG :: (STCell s (Flat (Gen g)) -> ST s a) -> ValiGen Generate s g a
+  GenVG :: (ST s (MaybeGen g, a)) -> ValiGen Generate s g a
 
-runValiGen :: forall mode a.
-  (forall s. ValiGen mode s a) ->
+instance ModeC mode => MonadST (ValiGen mode s g) where
+  type World (ValiGen mode s g) = s
+
+  liftST x =
+    case getMode @mode of
+      FilterS -> ValidateVG x
+      GenerateS -> GenVG (fmap (Nothing, ) x)
+
+mkGen :: forall mode s g. ModeC mode => Gen g -> ValiGen mode s g ()
+mkGen gen =
+  case getMode @mode of
+    FilterS -> pure ()
+    GenerateS -> GenVG (pure (Just gen, ()))
+
+getGen :: forall mode s g a.
+  ValiGen mode s g a ->
+  ValiGen mode s g (MaybeGen g)
+getGen (GenVG x) = GenVG $ fmap (\(g, _) -> (g, g)) x
+getGen (ValidateVG _) = pure Nothing
+
+instance ModeC mode => MonadFail (ValiGen mode s g) where
+  fail = error
+
+instance Functor (ValiGen mode s g) where
+  fmap f (ValidateVG x) = ValidateVG $ fmap f x
+  fmap f (GenVG k) = GenVG $ fmap (fmap f) k
+
+instance ModeC mode => Applicative (ValiGen mode s g) where
+  pure x =
+    case getMode @mode of
+      FilterS -> ValidateVG (pure x)
+      GenerateS -> GenVG (pure (Nothing, x))
+
+  (<*>) = ap
+
+instance ModeC mode => Monad (ValiGen mode s g) where
+  ValidateVG x >>= f = ValidateVG (x >>= (extractVG . f))
+    where
+      extractVG :: ValiGen Filter s g a -> ST s a
+      extractVG (ValidateVG y) = y
+
+  GenVG x >>= f = GenVG $ do
+      (_, v) <- x
+      extractVG $ f v
+    where
+      extractVG :: ValiGen Generate s g a -> ST s (MaybeGen g, a)
+      extractVG (GenVG y) = y
+
+validate :: forall g a.
+  (forall s. ValiGen Filter s g a) ->
   a
-runValiGen vg = runST (coerceValiGen vg)
+validate vg = runST (coerceValiGen vg)
   where
-    coerceValiGen :: ValiGen mode s b -> ST s b
-    coerceValiGen (ValiGen x) = x
+    coerceValiGen :: ValiGen Filter s g b -> ST s b
+    coerceValiGen (ValidateVG x) = x
 
-type ValiGen' s a = forall mode. ValiGen mode s a
+runGen :: forall g a.
+  (forall s. ValiGen Generate s g a) ->
+  (MaybeGen g, a)
+runGen vg = runST (coerceValiGen vg)
+  where
+    coerceValiGen :: ValiGen Generate s g b -> ST s (MaybeGen g, b)
+    coerceValiGen (GenVG x) = x
 
-newtype GenOut (mode :: Mode) s a = GenOut (Cell (ValiGen mode s) a)
-newtype GenIn  (mode :: Mode) s a = GenIn  (Cell (ValiGen mode s) a)
+newtype GenOut (mode :: Mode) s g a = GenOut (Cell (ValiGen mode s g) a)
+newtype GenIn  (mode :: Mode) s g a = GenIn  (Cell (ValiGen mode s g) a)
 
 class ReadVar f where
-  readVar :: f mode s a -> ValiGen mode s (Defined a)
-  watchVar :: f mode s a -> (Defined a -> ValiGen mode s r) -> ValiGen mode s r
+  readVar :: ModeC mode => f mode s g a -> ValiGen mode s g (Defined a)
+  watchVar :: ModeC mode => f mode s g a -> (Defined a -> ValiGen mode s g r) -> ValiGen mode s g r
 
 class WriteVar f mode where
-  writeVar :: Semigroup a => f mode s a -> a -> ValiGen mode s ()
-  partialWriteVar :: PartialSemigroup a => f mode s a -> a -> ValiGen mode s ()
+  writeVar :: Semigroup a => f mode s g a -> a -> ValiGen mode s g ()
+  partialWriteVar :: PartialSemigroup a => f mode s g a -> a -> ValiGen mode s g ()
 
   lift3 ::
-    (Cell (ValiGen mode s) a -> Cell (ValiGen mode s) a -> Cell (ValiGen mode s) a -> ValiGen mode s ()) ->
-    f mode s a -> f mode s a -> f mode s a -> ValiGen mode s ()
+    (Cell (ValiGen mode s g) a -> Cell (ValiGen mode s g) a -> Cell (ValiGen mode s g) a -> ValiGen mode s g ()) ->
+    f mode s g a -> f mode s g a -> f mode s g a -> ValiGen mode s g ()
 
 
 instance ReadVar GenOut where
@@ -124,11 +181,11 @@ instance WriteVar GenIn Filter where
 --         Known yVal -> writeVar x yVal
 --         _ -> pure ()
 
-withEq :: forall mode s r a. (Eq a, ModeC mode) =>
+withEq :: forall mode s r g a. (Eq a, ModeC mode) =>
   a ->
-  GenOut mode s (Flat a) ->
-  (GenOut mode s (Flat a) -> ValiGen mode s ()) ->
-  ValiGen mode s ()
+  GenOut mode s g (Flat a) ->
+  (GenOut mode s g (Flat a) -> ValiGen mode s g ()) ->
+  ValiGen mode s g ()
 withEq x c f =
   case getMode @mode of
     GenerateS -> partialWriteVar c (Flat x) *> f c
@@ -137,22 +194,22 @@ withEq x c f =
         Known (Flat v) | v == x -> f c
         _ -> pure ()
 
-black :: forall mode s r. (ModeC mode) =>
-  GenOut mode s (Flat Color) ->
-  (GenOut mode s (Flat Color) -> ValiGen mode s ()) ->
-  ValiGen mode s ()
+black :: forall mode s g r. (ModeC mode) =>
+  GenOut mode s g (Flat Color) ->
+  (GenOut mode s g (Flat Color) -> ValiGen mode s g ()) ->
+  ValiGen mode s g ()
 black = withEq Black
 
-red :: forall mode s r. (ModeC mode) =>
-  GenOut mode s (Flat Color) ->
-  (GenOut mode s (Flat Color) -> ValiGen mode s ()) ->
-  ValiGen mode s ()
+red :: forall mode s g r. (ModeC mode) =>
+  GenOut mode s g (Flat Color) ->
+  (GenOut mode s g (Flat Color) -> ValiGen mode s g ()) ->
+  ValiGen mode s g ()
 red = withEq Red
 
-leaf :: forall mode s a. (ModeC mode, Eq a) =>
-  GenOut mode s (Flat (Tree a)) ->
-  ValiGen mode s () ->
-  ValiGen mode s ()
+leaf :: forall mode s g a. (ModeC mode, Eq a) =>
+  GenOut mode s g (Flat (Tree a)) ->
+  ValiGen mode s g () ->
+  ValiGen mode s g ()
 leaf c act =
   case getMode @mode of
     GenerateS -> partialWriteVar c (Flat Leaf) *> act -- TODO: Is this right?
@@ -161,10 +218,10 @@ leaf c act =
         Known (Flat Leaf) -> act
         _ -> pure ()
 
-node :: forall mode s a. (ModeC mode, Eq a) =>
-  GenOut mode s (Flat (Tree a)) ->
-  (GenOut mode s a -> GenOut mode s (Flat (Tree a)) -> GenOut mode s (Flat (Tree a)) -> ValiGen mode s ()) ->
-  ValiGen mode s ()
+node :: forall mode s g a. (ModeC mode, Eq a) =>
+  GenOut mode s g (Flat (Tree a)) ->
+  (GenOut mode s g a -> GenOut mode s g (Flat (Tree a)) -> GenOut mode s g (Flat (Tree a)) -> ValiGen mode s g ()) ->
+  ValiGen mode s g ()
 node cell f =
   case getMode @mode of
     GenerateS -> do
@@ -184,7 +241,7 @@ node cell f =
         _ -> pure ()
 
 getIncrement :: (ModeC mode, Num a, Ord a, WriteVar GenOut mode) =>
-  GenOut mode s (Flat Color) -> GenOut mode s (Max a) -> ValiGen mode s ()
+  GenOut mode s g (Flat Color) -> GenOut mode s g (Max a) -> ValiGen mode s g ()
 getIncrement color iCell =
   black color (\_ -> writeVar iCell 1)
     <>
@@ -195,31 +252,43 @@ getIncrement color iCell =
 -- add' = undefined
 
 instance ModeC mode =>
-  Semigroup (ValiGen mode s a) where
+  Semigroup (ValiGen mode s g a) where
   (<>) = (*>) -- TODO: Work on this
 
 run2'2 ::
-  ModeS mode ->
   (forall s.
-   GenOut mode s (Flat a) ->
-   GenOut mode s (Max b) ->
-   ValiGen mode s ()) ->
+   GenOut Filter s g (Flat a) ->
+   GenOut Filter s g (Max b) ->
+   ValiGen Filter s g ()) ->
   a ->
   b
-run2'2 _ f x = runValiGen $ do
+run2'2 f x = validate $ do
   xCell <- GenOut <$> mkKnown (Flat x)
   yCell <- GenOut <$> mkUnknown
   f xCell yCell
   readVar yCell >>= \case
     Known (Max y) -> pure y
 
+runGen2'2 ::
+  (forall s.
+   GenOut Generate s g (Flat a) ->
+   GenOut Generate s g (Max b) ->
+   ValiGen Generate s g ()) ->
+  b ->
+  (MaybeGen g, a)
+runGen2'2 f y = runGen $ do
+  xCell <- GenOut <$> mkUnknown
+  yCell <- GenOut <$> mkKnown (Max y)
+  f xCell yCell
+  readVar xCell >>= \case
+    Known (Flat x) -> pure x
 
 blackHeight :: (ModeC mode, WriteVar GenOut mode) =>
-  GenOut mode s (Flat (Tree (Flat Color))) ->
-  GenOut mode s (Max Int) ->
-  ValiGen mode s ()
+  GenOut mode s (Flat (Tree (Flat Color))) (Flat (Tree (Flat Color))) ->
+  GenOut mode s (Flat (Tree (Flat Color))) (Max Int) ->
+  ValiGen mode s (Flat (Tree (Flat Color))) ()
 blackHeight t height =
-  leaf t (writeVar height 1 $> ())
+  leaf t (writeVar height 1 *> mkGen (pure (Flat Leaf)))
     <>
   node t (\c left right -> do
     i <- GenOut <$> mkUnknown
@@ -245,10 +314,10 @@ blackHeight t height =
     blackHeight left leftHeight
     blackHeight right rightHeight
 
-    cVal <- readVar c
-    leftVal <- readVar left
-    rightVal <- readVar right
-    pure () --(cVal, leftVal, rightVal)
+    Known cVal <- readVar c
+    Known leftVal <- readVar left
+    Known rightVal <- readVar right
+    mkGen $ pure $ Flat $ Node cVal (getFlat leftVal) (getFlat rightVal)
     )
 
 
