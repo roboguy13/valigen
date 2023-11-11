@@ -31,7 +31,7 @@ import Control.Monad
 import Data.Monoid
 
 data Tree a = Leaf | Node a (Tree a) (Tree a)
-  deriving (Show, Eq)
+  deriving (Show, Eq, Functor)
 
 data Color = Red | Black
   deriving (Show, Eq)
@@ -58,6 +58,16 @@ newtype ValiGen (mode :: Mode) s a where
   ValiGen :: ST s a -> ValiGen mode s a
   deriving (Functor, Applicative, Monad, MonadST)
 
+newtype Test s a = Test (ST s a)
+
+runValiGen :: forall mode a.
+  (forall s. ValiGen mode s a) ->
+  a
+runValiGen vg = runST (coerceValiGen vg)
+  where
+    coerceValiGen :: ValiGen mode s b -> ST s b
+    coerceValiGen (ValiGen x) = x
+
 type ValiGen' s a = forall mode. ValiGen mode s a
 
 newtype GenOut (mode :: Mode) s a = GenOut (Cell (ValiGen mode s) a)
@@ -71,6 +81,11 @@ class WriteVar f mode where
   writeVar :: Semigroup a => f mode s a -> a -> ValiGen mode s ()
   partialWriteVar :: PartialSemigroup a => f mode s a -> a -> ValiGen mode s ()
 
+  lift3 ::
+    (Cell (ValiGen mode s) a -> Cell (ValiGen mode s) a -> Cell (ValiGen mode s) a -> ValiGen mode s ()) ->
+    f mode s a -> f mode s a -> f mode s a -> ValiGen mode s ()
+
+
 instance ReadVar GenOut where
   readVar (GenOut c) = readCell c
   watchVar (GenOut c) = watch c
@@ -82,10 +97,18 @@ instance ReadVar GenIn where
 instance WriteVar GenOut Generate where
   writeVar (GenOut c) x = writeCellSemi c x $> ()
   partialWriteVar (GenOut c) x = writeCell c x $> ()
+  lift3 f x y z = f (coerce x) (coerce y) (coerce z)
+
+-- TODO: Remove. This is for testing purposes
+instance WriteVar GenOut Filter where
+  writeVar (GenOut c) x = writeCellSemi c x $> ()
+  partialWriteVar (GenOut c) x = writeCell c x $> ()
+  lift3 f x y z = f (coerce x) (coerce y) (coerce z)
 
 instance WriteVar GenIn Filter where
   writeVar (GenIn c) x = writeCellSemi c x $> ()
   partialWriteVar (GenIn c) x = writeCell c x $> ()
+  lift3 f x y z = f (coerce x) (coerce y) (coerce z)
 
 -- add :: forall mode s. (ModeC mode) =>
 --   GenIn mode s (Sum Int) -> GenOut mode s (Sum Int) -> ValiGen mode s ()
@@ -140,7 +163,7 @@ leaf c act =
 
 node :: forall mode s a. (ModeC mode, Eq a) =>
   GenOut mode s (Flat (Tree a)) ->
-  (GenOut mode s a -> GenOut mode s (Flat (Tree a)) -> GenOut mode s (Flat (Tree a)) -> ValiGen mode s (a, Flat (Tree a), Flat (Tree a))) ->
+  (GenOut mode s a -> GenOut mode s (Flat (Tree a)) -> GenOut mode s (Flat (Tree a)) -> ValiGen mode s ()) ->
   ValiGen mode s ()
 node cell f =
   case getMode @mode of
@@ -148,7 +171,7 @@ node cell f =
       itemCell <- GenOut <$> mkUnknown
       leftCell <- GenOut <$> mkUnknown
       rightCell <- GenOut <$> mkUnknown
-      (item, left, right) <- f itemCell leftCell rightCell
+      _ <- f itemCell leftCell rightCell
       pure () -- TODO: Figure out how the generating part should be here
     FilterS ->
       watchVar cell $ \case
@@ -156,39 +179,76 @@ node cell f =
           itemCell <- GenOut <$> mkKnown c
           leftCell <- GenOut <$> mkKnown (Flat left)
           rightCell <- GenOut <$> mkKnown (Flat right)
-          (item, left, right) <- f itemCell leftCell rightCell
+          _ <- f itemCell leftCell rightCell
           pure ()
         _ -> pure ()
 
-getIncrement = undefined
+getIncrement :: (ModeC mode, Num a, Ord a, WriteVar GenOut mode) =>
+  GenOut mode s (Flat Color) -> GenOut mode s (Max a) -> ValiGen mode s ()
+getIncrement color iCell =
+  black color (\_ -> writeVar iCell 1)
+    <>
+  red color (\_ -> writeVar iCell 0)
 
-add' :: forall mode s f a. (WriteVar f mode, Eq a, Num a) =>
-  f mode s a -> f mode s a -> f mode s a -> ValiGen mode s ()
-add' = undefined
+-- add' :: forall mode s f a. (WriteVar f mode, Eq a, Num a) =>
+--   f mode s a -> f mode s a -> f mode s a -> ValiGen mode s ()
+-- add' = undefined
 
-blackHeight ::
-  GenOut mode s (Flat (Tree a)) ->
+instance ModeC mode =>
+  Semigroup (ValiGen mode s a) where
+  (<>) = (*>) -- TODO: Work on this
+
+run2'2 ::
+  ModeS mode ->
+  (forall s.
+   GenOut mode s (Flat a) ->
+   GenOut mode s (Max b) ->
+   ValiGen mode s ()) ->
+  a ->
+  b
+run2'2 _ f x = runValiGen $ do
+  xCell <- GenOut <$> mkKnown (Flat x)
+  yCell <- GenOut <$> mkUnknown
+  f xCell yCell
+  readVar yCell >>= \case
+    Known (Max y) -> pure y
+
+
+blackHeight :: (ModeC mode, WriteVar GenOut mode) =>
+  GenOut mode s (Flat (Tree (Flat Color))) ->
   GenOut mode s (Max Int) ->
   ValiGen mode s ()
 blackHeight t height =
   leaf t (writeVar height 1 $> ())
     <>
   node t (\c left right -> do
-    i <- getIncrement c
+    i <- GenOut <$> mkUnknown
+    getIncrement c i
     leftHeightInc <- GenOut <$> mkUnknown
     rightHeightInc <- GenOut <$> mkUnknown
 
     leftHeight <- GenOut <$> mkUnknown
     rightHeight <- GenOut <$> mkUnknown
 
-    add' i leftHeight leftHeightInc
-    add' i rightHeight rightHeightInc
+    lift3 add i leftHeight leftHeightInc
+    lift3 add i rightHeight rightHeightInc
 
-    writeVar height leftHeightInc
-    writeVar height rightHeightInc
+    watchVar leftHeightInc $ \case
+      Known lh -> writeVar height lh
+      _ -> pure ()
+    watchVar rightHeightInc $ \case
+      Known rh -> writeVar height rh
+      _ -> pure ()
+    -- writeVar height leftHeightInc
+    -- writeVar height rightHeightInc
+
     blackHeight left leftHeight
     blackHeight right rightHeight
-    pure (c, left, right)
+
+    cVal <- readVar c
+    leftVal <- readVar left
+    rightVal <- readVar right
+    pure () --(cVal, leftVal, rightVal)
     )
 
 
