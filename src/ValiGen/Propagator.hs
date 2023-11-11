@@ -42,6 +42,11 @@ newtype LiftedSemigroup a = LiftedSemigroup { getLiftedSemigroup :: a }
 instance Semigroup a => PartialSemigroup (LiftedSemigroup a) where
   x <<>> y = Known (x <> y)
 
+instance (PartialSemigroup a, PartialSemigroup b) =>
+  PartialSemigroup (a, b) where
+  (x1, y1) <<>> (x2, y2) =
+    liftA2 (,) (x1 <<>> x2) (y1 <<>> y2)
+
 newtype Flat a = Flat { getFlat :: a }
   deriving (Show, Functor, Eq, Ord)
 
