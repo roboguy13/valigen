@@ -87,19 +87,19 @@ instance WriteVar GenIn Filter where
   writeVar (GenIn c) x = writeCellSemi c x $> ()
   partialWriteVar (GenIn c) x = writeCell c x $> ()
 
-add :: forall mode s. (ModeC mode) =>
-  GenIn mode s (Sum Int) -> GenOut mode s (Sum Int) -> ValiGen mode s ()
-add x y =
-  case getMode @mode of
-    GenerateS ->
-      watchVar x $ \case
-        Known xVal -> writeVar y xVal
-        _ -> pure ()
+-- add :: forall mode s. (ModeC mode) =>
+--   GenIn mode s (Sum Int) -> GenOut mode s (Sum Int) -> ValiGen mode s ()
+-- add x y =
+--   case getMode @mode of
+--     GenerateS ->
+--       watchVar x $ \case
+--         Known xVal -> writeVar y xVal
+--         _ -> pure ()
 
-    FilterS ->
-      watchVar y $ \case
-        Known yVal -> writeVar x yVal
-        _ -> pure ()
+--     FilterS ->
+--       watchVar y $ \case
+--         Known yVal -> writeVar x yVal
+--         _ -> pure ()
 
 withEq :: forall mode s r a. (Eq a, ModeC mode) =>
   a ->
@@ -126,20 +126,70 @@ red :: forall mode s r. (ModeC mode) =>
   ValiGen mode s ()
 red = withEq Red
 
--- blackHeight t height =
--- leaf t 1
---   <>
--- node t $ \(c, left, right) ->
---   i <- getIncrement c
---   leftHeight <- mkUnknown
---   rightHeight <- mkUnknown
---   add i leftHeight
---   add i rightHeight
---   writeVar height leftHeight
---   writeVar height rightHeight
---   left <- blackHeight left leftHeight
---   right <- blackHeight right rightHeight
---   pure (c, left, right)
+leaf :: forall mode s a. (ModeC mode, Eq a) =>
+  GenOut mode s (Flat (Tree a)) ->
+  ValiGen mode s () ->
+  ValiGen mode s ()
+leaf c act =
+  case getMode @mode of
+    GenerateS -> partialWriteVar c (Flat Leaf) *> act -- TODO: Is this right?
+    FilterS ->
+      watchVar c $ \case
+        Known (Flat Leaf) -> act
+        _ -> pure ()
+
+node :: forall mode s a. (ModeC mode, Eq a) =>
+  GenOut mode s (Flat (Tree a)) ->
+  (GenOut mode s a -> GenOut mode s (Flat (Tree a)) -> GenOut mode s (Flat (Tree a)) -> ValiGen mode s (a, Flat (Tree a), Flat (Tree a))) ->
+  ValiGen mode s ()
+node cell f =
+  case getMode @mode of
+    GenerateS -> do
+      itemCell <- GenOut <$> mkUnknown
+      leftCell <- GenOut <$> mkUnknown
+      rightCell <- GenOut <$> mkUnknown
+      (item, left, right) <- f itemCell leftCell rightCell
+      pure () -- TODO: Figure out how the generating part should be here
+    FilterS ->
+      watchVar cell $ \case
+        Known (Flat (Node c left right)) -> do
+          itemCell <- GenOut <$> mkKnown c
+          leftCell <- GenOut <$> mkKnown (Flat left)
+          rightCell <- GenOut <$> mkKnown (Flat right)
+          (item, left, right) <- f itemCell leftCell rightCell
+          pure ()
+        _ -> pure ()
+
+getIncrement = undefined
+
+add' :: forall mode s f a. (WriteVar f mode, Eq a, Num a) =>
+  f mode s a -> f mode s a -> f mode s a -> ValiGen mode s ()
+add' = undefined
+
+blackHeight ::
+  GenOut mode s (Flat (Tree a)) ->
+  GenOut mode s (Max Int) ->
+  ValiGen mode s ()
+blackHeight t height =
+  leaf t (writeVar height 1 $> ())
+    <>
+  node t (\c left right -> do
+    i <- getIncrement c
+    leftHeightInc <- GenOut <$> mkUnknown
+    rightHeightInc <- GenOut <$> mkUnknown
+
+    leftHeight <- GenOut <$> mkUnknown
+    rightHeight <- GenOut <$> mkUnknown
+
+    add' i leftHeight leftHeightInc
+    add' i rightHeight rightHeightInc
+
+    writeVar height leftHeightInc
+    writeVar height rightHeightInc
+    blackHeight left leftHeight
+    blackHeight right rightHeight
+    pure (c, left, right)
+    )
 
 
 

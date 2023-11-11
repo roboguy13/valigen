@@ -1,6 +1,7 @@
 -- |
 
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 
 module ValiGen.Propagator where
 
@@ -48,7 +49,7 @@ instance (PartialSemigroup a, PartialSemigroup b) =>
     liftA2 (,) (x1 <<>> x2) (y1 <<>> y2)
 
 newtype Flat a = Flat { getFlat :: a }
-  deriving (Show, Functor, Eq, Ord)
+  deriving (Show, Functor, Eq, Ord, Num, Integral, Enum, Real, Floating, Fractional)
 
 instance Eq a => PartialSemigroup (Flat a) where
   x <<>> y
@@ -132,6 +133,20 @@ watch (Cell ref) k = do
       (_, z) <- liftST $ readSTRef ref
       k z
 
+setWith :: (MonadST m, PartialSemigroup b) =>
+  (a -> b) -> Cell m a -> Cell m b -> m ()
+setWith f srcC tgtC =
+  watch srcC $ \case
+    Known x -> writeCell tgtC (f x) $> ()
+    _ -> pure ()
+
+setWithSemi :: (MonadST m, Semigroup b) =>
+  (a -> b) -> Cell m a -> Cell m b -> m ()
+setWithSemi f srcC tgtC =
+  watch srcC $ \case
+    Known x -> writeCellSemi tgtC (f x) $> ()
+    _ -> pure ()
+
 -- watchGen :: forall s a. Cell s a -> (Defined a -> Gen a) -> ST s ()
 -- watchGen = undefined
 
@@ -183,6 +198,13 @@ binary f cX cY cR = do
       x <- readCell cX
       writeDefinedCell cR (liftA2 f x y)
       pure ()
+
+add :: forall m a. (MonadST m, Eq a, Num a) =>
+  Cell m a -> Cell m a -> Cell m a -> m ()
+add = coerce go
+  where
+    go :: Cell m (Flat a) -> Cell m (Flat a) -> Cell m (Flat a) -> m ()
+    go = binary (+)
 
 data Val a = GenVal (Gen a) | RegularVal a
   deriving (Functor)
