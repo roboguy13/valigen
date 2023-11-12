@@ -48,6 +48,14 @@ instance (PartialSemigroup a, PartialSemigroup b) =>
   (x1, y1) <<>> (x2, y2) =
     liftA2 (,) (x1 <<>> x2) (y1 <<>> y2)
 
+  -- | Write only once
+newtype Once a = Once { getOnce :: a }
+  deriving (Show, Functor, Num, Enum, Floating, Fractional)
+
+instance PartialSemigroup (Once a) where
+  _ <<>> _ = Inconsistent
+
+  -- | Use the underlying Eq instance to ensure all writes are of the same value
 newtype Flat a = Flat { getFlat :: a }
   deriving (Show, Functor, Eq, Ord, Num, Integral, Enum, Real, Floating, Fractional)
 
@@ -120,15 +128,14 @@ readCell :: MonadST m =>
   Cell m a -> m (Defined a)
 readCell (Cell ref) = snd <$> liftST (readSTRef ref)
 
--- TODO: Change this type to get rid of the 'r' type variable
 watch :: forall m a r. MonadST m =>
-  Cell m a -> (Defined a -> m r) -> m r
+  Cell m a -> (Defined a -> m ()) -> m ()
 watch (Cell ref) k = do
   (act, x) <- liftST $ readSTRef ref
   liftST $ writeSTRef ref (act *> go $> (), x)
   go
   where
-    go :: m r
+    go :: m ()
     go = do
       (_, z) <- liftST $ readSTRef ref
       k z
